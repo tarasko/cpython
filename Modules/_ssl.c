@@ -335,6 +335,9 @@ typedef struct {
      * and shutdown methods check for chained exceptions.
      */
     PyObject *exc;
+    /* SSL pre-instantiated exceptions for performance */
+    PyObject *want_read_error;
+    PyObject *want_write_error;
 } PySSLSocket;
 
 typedef struct {
@@ -468,10 +471,10 @@ static PyType_Spec sslerror_type_spec = {
     .slots = sslerror_type_slots
 };
 
-static void
-fill_and_set_sslerror(_sslmodulestate *state,
-                      PySSLSocket *sslsock, PyObject *type, int ssl_errno,
-                      const char *errstr, int lineno, unsigned long errcode)
+static PyObject*
+fill_sslerror(_sslmodulestate *state,
+              PySSLSocket *sslsock, PyObject *type, int ssl_errno,
+              const char *errstr, int lineno, unsigned long errcode)
 {
     PyObject *err_value = NULL, *reason_obj = NULL, *lib_obj = NULL;
     PyObject *verify_obj = NULL, *verify_code_obj = NULL;
@@ -585,11 +588,37 @@ fill_and_set_sslerror(_sslmodulestate *state,
             goto fail;
     }
 
-    PyErr_SetObject(type, err_value);
+    return err_value;
 fail:
     Py_XDECREF(err_value);
     Py_XDECREF(verify_code_obj);
     Py_XDECREF(verify_obj);
+    return NULL;
+}
+
+static void
+fill_and_set_sslerror(_sslmodulestate *state,
+                      PySSLSocket *sslsock, PyObject *type, int ssl_errno,
+                      const char *errstr, int lineno, unsigned long errcode)
+{
+    PyObject *err_value;
+    switch (ssl_errno)
+    {
+    case PY_SSL_ERROR_WANT_READ:
+        err_value = sslsock->want_read_error;
+        Py_CLEAR(((PyBaseExceptionObject*)err_value)->traceback);
+        break;
+    case PY_SSL_ERROR_WANT_WRITE:
+        err_value = sslsock->want_read_error;
+        Py_CLEAR(((PyBaseExceptionObject*)err_value)->traceback);
+        break;
+    default:
+        err_value = fill_sslerror(state, sslsock, type, ssl_errno, errstr,
+                                  lineno, errcode);
+    }
+
+    if (err_value != NULL)
+        PyErr_SetObject(type, err_value);
 }
 
 static int
@@ -838,6 +867,29 @@ newPySSLSocket(PySSLContext *sslctx, PySocketSockObject *sock,
     self->server_hostname = NULL;
     self->err = err;
     self->exc = NULL;
+
+    self->want_read_error = fill_sslerror(
+        get_state_ctx(sslctx),
+        NULL,
+        get_state_ctx(sslctx)->PySSLWantReadErrorObject,
+        PY_SSL_ERROR_WANT_READ,
+        "The operation did not complete (read)",
+        __LINE__,
+        SSL_ERROR_WANT_READ
+        );
+    if (self->want_read_error == NULL) {
+        return NULL;
+    }
+
+    self->want_write_error = fill_sslerror(
+        get_state_ctx(sslctx),
+        NULL,
+        get_state_ctx(sslctx)->PySSLWantWriteErrorObject,
+        PY_SSL_ERROR_WANT_WRITE,
+        "The operation did not complete (write)",
+        __LINE__,
+        SSL_ERROR_WANT_WRITE
+        );
 
     /* Make sure the SSL error state is initialized */
     ERR_clear_error();
@@ -2234,6 +2286,8 @@ static int
 PySSL_traverse(PySSLSocket *self, visitproc visit, void *arg)
 {
     Py_VISIT(self->exc);
+    Py_VISIT(self->want_read_error);
+    Py_VISIT(self->want_write_error);
     Py_VISIT(Py_TYPE(self));
     return 0;
 }
@@ -2242,6 +2296,8 @@ static int
 PySSL_clear(PySSLSocket *self)
 {
     Py_CLEAR(self->exc);
+    Py_CLEAR(self->want_read_error);
+    Py_CLEAR(self->want_write_error);
     return 0;
 }
 
@@ -2257,6 +2313,8 @@ PySSL_dealloc(PySSLSocket *self)
     Py_XDECREF(self->ctx);
     Py_XDECREF(self->server_hostname);
     Py_XDECREF(self->owner);
+    Py_XDECREF(self->want_read_error);
+    Py_XDECREF(self->want_write_error);
     PyObject_GC_Del(self);
     Py_DECREF(tp);
 }
@@ -6511,11 +6569,12 @@ sslmodule_init_lock(PyObject *module)
     return 0;
 }
 
+
 static PyModuleDef_Slot sslmodule_slots[] = {
     {Py_mod_exec, sslmodule_init_types},
     {Py_mod_exec, sslmodule_init_exceptions},
     {Py_mod_exec, sslmodule_init_socketapi},
-    {Py_mod_exec, sslmodule_init_errorcodes},
+    {Py_mod_exec, sslmodule_init_errorcodes},    
     {Py_mod_exec, sslmodule_init_constants},
     {Py_mod_exec, sslmodule_init_versioninfo},
     {Py_mod_exec, sslmodule_init_strings},
