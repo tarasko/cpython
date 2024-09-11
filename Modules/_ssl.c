@@ -602,17 +602,16 @@ fill_and_set_sslerror(_sslmodulestate *state,
                       const char *errstr, int lineno, unsigned long errcode)
 {
     PyObject *err_value;
-    switch (ssl_errno)
-    {
-    case PY_SSL_ERROR_WANT_READ:
+
+    if (ssl_errno == PY_SSL_ERROR_WANT_READ && sslsock->want_read_error != NULL) {
         err_value = sslsock->want_read_error;
         Py_CLEAR(((PyBaseExceptionObject*)err_value)->traceback);
-        break;
-    case PY_SSL_ERROR_WANT_WRITE:
-        err_value = sslsock->want_read_error;
+    }
+    else if (ssl_errno == PY_SSL_ERROR_WANT_WRITE && sslsock->want_write_error != NULL) {
+        err_value = sslsock->want_write_error;
         Py_CLEAR(((PyBaseExceptionObject*)err_value)->traceback);
-        break;
-    default:
+    }
+    else {
         err_value = fill_sslerror(state, sslsock, type, ssl_errno, errstr,
                                   lineno, errcode);
     }
@@ -890,6 +889,9 @@ newPySSLSocket(PySSLContext *sslctx, PySocketSockObject *sock,
         __LINE__,
         SSL_ERROR_WANT_WRITE
         );
+    if (self->want_write_error == NULL) {
+        return NULL;
+    }
 
     /* Make sure the SSL error state is initialized */
     ERR_clear_error();
@@ -2681,6 +2683,10 @@ _ssl__SSLSocket_shutdown_impl(PySSLSocket *self)
     PySocketSockObject *sock = GET_SOCKET(self);
     PyTime_t timeout, deadline = 0;
     int has_timeout;
+
+    // Clear cached exception instances because "normal" socket life is over.
+    Py_CLEAR(self->want_read_error);
+    Py_CLEAR(self->want_write_error);
 
     if (sock != NULL) {
         /* Guard against closed socket */
