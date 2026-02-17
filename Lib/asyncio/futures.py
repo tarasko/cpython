@@ -3,6 +3,7 @@
 __all__ = (
     'Future', 'wrap_future', 'isfuture',
     'future_add_to_awaited_by', 'future_discard_from_awaited_by',
+    'eager_future_factory'
 )
 
 import concurrent.futures

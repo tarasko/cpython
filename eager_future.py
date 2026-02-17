@@ -25,18 +25,34 @@ async def func(fut):
 
 async def main():
     loop = asyncio.get_running_loop()
-    loop.set_task_factory(asyncio.eager_task_factory)
-    fut = asyncio.Future(loop=loop)
-    fut.add_done_callback(partial(callback_no_exc, _, 1))
-    fut.add_done_callback(callback_with_exc)
-    fut.add_done_callback(partial(callback_no_exc, _, 2))
+
+    # Comment this in order to fallback to original behavior
+    loop.set_future_factory(asyncio.eager_future_factory)
+
+    # Demonstrate future that has result
+    fut = loop.create_future()
     loop.create_task(func(fut))
     await asyncio.sleep(1)
     print("main: before set_result")
-    fut.eager_set_result(None)
-    print("main: set_result done")
+    fut.set_result(None)
+    print("main: after set_result")
+
+    # Demonstrate future with exception
+    fut = loop.create_future()
+    loop.create_task(func(fut))
     await asyncio.sleep(1)
-    print("main: done")
+    print("main: before set_exception")
+    fut.set_exception(RuntimeError("FUTURE WITH EXCEPTION"))
+    print("main: after set_exception")
+
+    # Demonstrate future with done callbacks that may raise
+    fut = loop.create_future()
+    fut.add_done_callback(partial(callback_no_exc, _, 1))
+    fut.add_done_callback(callback_with_exc)
+    fut.add_done_callback(partial(callback_no_exc, _, 2))
+    print("main: before set_result")
+    fut.set_result(None)
+    print("main: after set_result")
 
 
 asyncio.run(main())
