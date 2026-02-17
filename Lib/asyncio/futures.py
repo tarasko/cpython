@@ -72,9 +72,7 @@ class Future:
 
     __log_traceback = False
 
-    _eager_result = False
-
-    def __init__(self, *, loop=None):
+    def __init__(self, *, loop=None, eager_start=False):
         """Initialize the future.
 
         The optional event_loop argument allows explicitly setting the event
@@ -89,6 +87,7 @@ class Future:
             self._loop = events.get_event_loop()
         else:
             self._loop = loop
+        self._eager_start = eager_start
         self._callbacks = []
         if self._loop.get_debug():
             self._source_traceback = format_helpers.extract_stack(
@@ -177,22 +176,8 @@ class Future:
 
         self._callbacks[:] = []
         for callback, ctx in callbacks:
-            # TODO: run_in_context
-            try:
-                callback(self)
-            except BaseException as exc:
-                cb = format_helpers._format_callback_source(
-                    callback, (self,),
-                    debug=self._loop.get_debug())
-                msg = f'Exception in callback {cb}'
-                context = {
-                    'message': msg,
-                    'exception': exc,
-                    'handle': self,
-                }
-                if self._source_traceback:
-                    context['source_traceback'] = self._source_traceback
-                self._loop.call_exception_handler(context)
+            # TODO: Check what is going on with context
+            events._run_callback(self, callback, self._loop, None, self)
 
     def __schedule_callbacks(self):
         """Internal: Ask the event loop to call all callbacks.
@@ -284,7 +269,7 @@ class Future:
 
     # So-called internal methods (note: no set_running_or_notify_cancel()).
 
-    def set_result(self, result):
+    def set_result(self, result, eager_start=None):
         """Mark the future done and set its result.
 
         If the future is already done when this method is called, raises
@@ -294,22 +279,14 @@ class Future:
             raise exceptions.InvalidStateError(f'{self._state}: {self!r}')
         self._result = result
         self._state = _FINISHED
-        self.__schedule_callbacks()
+        if eager_start is not None:
+            self._eager_start = eager_start
+        if self._eager_start:
+            self.__execute_callbacks()
+        else:
+            self.__schedule_callbacks()
 
-    def eager_set_result(self, result):
-        """Mark the future done and set its result.
-
-        If the future is already done when this method is called, raises
-        InvalidStateError.
-        """
-        if self._state != _PENDING:
-            raise exceptions.InvalidStateError(f'{self._state}: {self!r}')
-        self._result = result
-        self._state = _FINISHED
-        self._eager_result = True
-        self.__execute_callbacks()
-
-    def set_exception(self, exception):
+    def set_exception(self, exception, eager_start=None):
         """Mark the future done and set an exception.
 
         If the future is already done when this method is called, raises
@@ -329,8 +306,13 @@ class Future:
         self._exception = exception
         self._exception_tb = exception.__traceback__
         self._state = _FINISHED
-        self.__schedule_callbacks()
+        if eager_start is not None:
+            self._eager_start = eager_start
         self.__log_traceback = True
+        if self._eager_start:
+            self.__execute_callbacks()
+        else:
+            self.__schedule_callbacks()
 
     def __await__(self):
         if not self.done():
@@ -503,6 +485,36 @@ def future_discard_from_awaited_by(fut, waiter, /):
     if isinstance(fut, _PyFuture) and isinstance(waiter, _PyFuture):
         if fut._Future__asyncio_awaited_by is not None:
             fut._Future__asyncio_awaited_by.discard(waiter)
+
+
+def create_eager_future_factory(custom_future_constructor):
+    """Create a function suitable for use as a future factory on an event-loop.
+
+        Example usage:
+
+            loop.set_future_factory(
+                asyncio.create_eager_future_factory(my_future_constructor))
+
+        Now, futures created will resume awaiters and execute done callbacks immediately (rather than being first
+        scheduled to an event loop). The constructor argument can be any callable
+        that returns a Future-compatible object and has a signature compatible
+        with `Future.__init__`; it must have the `eager_start` keyword argument.
+
+        Most applications will use `Future` for `custom_future_constructor` and in
+        this case there's no need to call `create_eager_future_factory()`
+        directly. Instead the  global `eager_future_factory` instance can be
+        used. E.g. `loop.set_future_factory(asyncio.eager_future_factory)`.
+        """
+
+    def factory(loop, *, eager_start=True, **kwargs):
+        return custom_future_constructor(
+            loop=loop, eager_start=eager_start, **kwargs)
+
+    return factory
+
+
+eager_future_factory = create_eager_future_factory(Future)
+
 
 
 _py_future_add_to_awaited_by = future_add_to_awaited_by

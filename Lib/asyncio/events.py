@@ -17,6 +17,7 @@ __all__ = (
     "_set_running_loop",
     "get_running_loop",
     "_get_running_loop",
+    "_run_callback"
 )
 
 import contextvars
@@ -29,6 +30,28 @@ import threading
 import warnings
 
 from . import format_helpers
+
+
+def _run_callback(handle, callback, loop, context, *args):
+    try:
+        if context is not None:
+            context.run(callback, *args)
+        else:
+            callback(*args)
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:
+        cb = format_helpers._format_callback_source(callback, args,
+            debug=loop.get_debug())
+        msg = f'Exception in callback {cb}'
+        context = {
+            'message': msg,
+            'exception': exc,
+            'handle': handle,
+        }
+        if handle._source_traceback:
+            context['source_traceback'] = handle._source_traceback
+        loop.call_exception_handler(context)
 
 
 class Handle:
@@ -90,23 +113,7 @@ class Handle:
         return self._cancelled
 
     def _run(self):
-        try:
-            self._context.run(self._callback, *self._args)
-        except (SystemExit, KeyboardInterrupt):
-            raise
-        except BaseException as exc:
-            cb = format_helpers._format_callback_source(
-                self._callback, self._args,
-                debug=self._loop.get_debug())
-            msg = f'Exception in callback {cb}'
-            context = {
-                'message': msg,
-                'exception': exc,
-                'handle': self,
-            }
-            if self._source_traceback:
-                context['source_traceback'] = self._source_traceback
-            self._loop.call_exception_handler(context)
+        _run_callback(self, self._callback, self._loop, self._context, *self._args)
         self = None  # Needed to break cycles when an exception occurs.
 
 # _ThreadSafeHandle is used for callbacks scheduled with call_soon_threadsafe
@@ -637,6 +644,12 @@ class AbstractEventLoop:
         raise NotImplementedError
 
     def get_task_factory(self):
+        raise NotImplementedError
+
+    def set_future_factory(self, factory):
+        raise NotImplementedError
+
+    def get_future_factory(self):
         raise NotImplementedError
 
     # Error handlers.

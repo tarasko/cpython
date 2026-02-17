@@ -437,6 +437,7 @@ class BaseEventLoop(events.AbstractEventLoop):
         self.slow_callback_duration = 0.1
         self._current_handle = None
         self._task_factory = None
+        self._future_factory = None
         self._coroutine_origin_tracking_enabled = False
         self._coroutine_origin_tracking_saved_depth = None
 
@@ -454,9 +455,12 @@ class BaseEventLoop(events.AbstractEventLoop):
             f'closed={self.is_closed()} debug={self.get_debug()}>'
         )
 
-    def create_future(self):
+    def create_future(self, **kwargs):
         """Create a Future object attached to the loop."""
-        return futures.Future(loop=self)
+        if self._future_factory is not None:
+            return self._future_factory(self, **kwargs)
+
+        return futures.Future(loop=self, **kwargs)
 
     def create_task(self, coro, **kwargs):
         """Schedule or begin executing a coroutine object.
@@ -495,6 +499,25 @@ class BaseEventLoop(events.AbstractEventLoop):
     def get_task_factory(self):
         """Return a task factory, or None if the default one is in use."""
         return self._task_factory
+
+    def set_future_factory(self, factory):
+        """Set a task factory that will be used by loop.create_future().
+
+        If factory is None the default future factory will be set.
+
+        If factory is a callable, it should have a signature matching
+        '(loop, **kwargs)', where 'loop' will be a reference to the active
+        event loop, 'coro' will be a coroutine object, and **kwargs will be
+        arbitrary keyword arguments that should be passed on to Future.
+        The callable must return a Future.
+        """
+        if factory is not None and not callable(factory):
+            raise TypeError('task factory must be a callable or None')
+        self._future_factory = factory
+
+    def get_future_factory(self):
+        """Return a task factory, or None if the default one is in use."""
+        return self._future_factory
 
     def _make_socket_transport(self, sock, protocol, waiter=None, *,
                                extra=None, server=None):
