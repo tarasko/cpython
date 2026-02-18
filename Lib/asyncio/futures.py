@@ -2,7 +2,7 @@
 
 __all__ = (
     'Future', 'wrap_future', 'isfuture',
-    'future_add_to_awaited_by', 'future_discard_from_awaited_by',
+    'future_add_to_awaited_by', 'future_discard_from_awaited_by'
 )
 
 import concurrent.futures
@@ -55,6 +55,7 @@ class Future:
     _cancel_message = None
     # A saved CancelledError for later chaining as an exception context.
     _cancelled_exc = None
+    _eager_start = False
 
     # This field is used for a dual purpose:
     # - Its presence is a marker to declare that a class implements
@@ -168,6 +169,16 @@ class Future:
         self.__schedule_callbacks()
         return True
 
+    def __execute_callbacks(self):
+        callbacks = self._callbacks[:]
+        if not callbacks:
+            return
+
+        self._callbacks[:] = []
+        for callback, ctx in callbacks:
+            # TODO: Check what is going on with context
+            events._run_callback(self, callback, self._loop, None, self)
+
     def __schedule_callbacks(self):
         """Internal: Ask the event loop to call all callbacks.
 
@@ -270,6 +281,14 @@ class Future:
         self._state = _FINISHED
         self.__schedule_callbacks()
 
+    def eager_set_result(self, result):
+        if self._state != _PENDING:
+            raise exceptions.InvalidStateError(f'{self._state}: {self!r}')
+        self._result = result
+        self._state = _FINISHED
+        self._eager_start = True
+        self.__execute_callbacks()
+
     def set_exception(self, exception):
         """Mark the future done and set an exception.
 
@@ -290,8 +309,27 @@ class Future:
         self._exception = exception
         self._exception_tb = exception.__traceback__
         self._state = _FINISHED
-        self.__schedule_callbacks()
         self.__log_traceback = True
+        self.__schedule_callbacks()
+
+    def eager_set_exception(self, exception):
+        if self._state != _PENDING:
+            raise exceptions.InvalidStateError(f'{self._state}: {self!r}')
+        if isinstance(exception, type):
+            exception = exception()
+        if isinstance(exception, StopIteration):
+            new_exc = RuntimeError("StopIteration interacts badly with "
+                                   "generators and cannot be raised into a "
+                                   "Future")
+            new_exc.__cause__ = exception
+            new_exc.__context__ = exception
+            exception = new_exc
+        self._exception = exception
+        self._exception_tb = exception.__traceback__
+        self._state = _FINISHED
+        self._eager_start = True
+        self.__log_traceback = True
+        self.__execute_callbacks()
 
     def __await__(self):
         if not self.done():

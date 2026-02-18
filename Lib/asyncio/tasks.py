@@ -244,12 +244,12 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
                 self._must_cancel = False
         return self._num_cancels_requested
 
-    def __eager_start(self):
+    def __eager_start(self, exc=None):
         prev_task = _py_swap_current_task(self._loop, self)
         try:
             _py_register_eager_task(self)
             try:
-                self._context.run(self.__step_run_and_handle_result, None)
+                self._context.run(self.__step_run_and_handle_result, exc)
             finally:
                 _py_unregister_eager_task(self)
         finally:
@@ -362,7 +362,10 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
             future.result()
         except BaseException as exc:
             # This may also be a cancellation.
-            self.__step(exc)
+            if future._eager_start:
+                self.__eager_start(exc)
+            else:
+                self.__step(exc)
         else:
             # Don't pass the value of `future.result()` explicitly,
             # as `Future.__iter__` and `Future.__await__` don't need it.
@@ -370,7 +373,10 @@ class Task(futures._PyFuture):  # Inherit Python Task implementation
             # Python eval loop would use `.send(value)` method call,
             # instead of `__next__()`, which is slower for futures
             # that return non-generator iterators from their `__iter__`.
-            self.__step()
+            if future._eager_start:
+                self.__eager_start()
+            else:
+                self.__step()
         self = None  # Needed to break cycles when an exception occurs.
 
 
