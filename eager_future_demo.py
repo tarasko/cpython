@@ -26,15 +26,12 @@ async def func(fut):
 async def main():
     loop = asyncio.get_running_loop()
 
-    # Comment this in order to fallback to original behavior
-    loop.set_future_factory(asyncio.eager_future_factory)
-
     # Demonstrate future that has result
     fut = loop.create_future()
     loop.create_task(func(fut))
     await asyncio.sleep(1)
     print("main: before set_result")
-    fut.set_result(None)
+    fut.eager_set_result(None)
     print("main: after set_result")
 
     # Demonstrate future with exception
@@ -42,7 +39,7 @@ async def main():
     loop.create_task(func(fut))
     await asyncio.sleep(1)
     print("main: before set_exception")
-    fut.set_exception(RuntimeError("FUTURE WITH EXCEPTION"))
+    fut.eager_set_exception(RuntimeError("FUTURE WITH EXCEPTION"))
     print("main: after set_exception")
 
     # Demonstrate future with done callbacks that may raise
@@ -51,7 +48,7 @@ async def main():
     fut.add_done_callback(callback_with_exc)
     fut.add_done_callback(partial(callback_no_exc, _, 2))
     print("main: before set_result")
-    fut.set_result(None)
+    fut.eager_set_result(None)
     print("main: after set_result")
 
 
