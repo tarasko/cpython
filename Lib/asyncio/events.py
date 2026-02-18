@@ -646,12 +646,6 @@ class AbstractEventLoop:
     def get_task_factory(self):
         raise NotImplementedError
 
-    def set_future_factory(self, factory):
-        raise NotImplementedError
-
-    def get_future_factory(self):
-        raise NotImplementedError
-
     # Error handlers.
 
     def get_exception_handler(self):

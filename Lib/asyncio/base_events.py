@@ -454,7 +454,7 @@ class BaseEventLoop(events.AbstractEventLoop):
             f'closed={self.is_closed()} debug={self.get_debug()}>'
         )
 
-    def create_future(self, **kwargs):
+    def create_future(self):
         """Create a Future object attached to the loop."""
         return futures.Future(loop=self)
 

@@ -504,7 +504,6 @@ def future_discard_from_awaited_by(fut, waiter, /):
             fut._Future__asyncio_awaited_by.discard(waiter)
 
 
-
 _py_future_add_to_awaited_by = future_add_to_awaited_by
 _py_future_discard_from_awaited_by = future_discard_from_awaited_by
 
